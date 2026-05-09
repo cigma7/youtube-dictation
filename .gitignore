@@ -1,6 +1,7 @@
 node_modules/
 tmp/
 data/
+.models/
 *.log
 .env
 [0-9]*-player-script.js
