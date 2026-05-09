@@ -1,0 +1,6 @@
+node_modules/
+tmp/
+data/
+*.log
+.env
+[0-9]*-player-script.js

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>구간 편집</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .ctrl-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .time-display {
+      font-size: 1.9rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+      letter-spacing: .04em;
+      min-width: 110px;
+    }
+
+    .ctrl-divider {
+      width: 1px;
+      height: 28px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    .kbd {
+      display: inline-block;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 5px;
+      font-size: .72rem;
+      font-family: monospace;
+      color: var(--muted);
+      margin-left: 4px;
+    }
+
+    .sentence-list { display: flex; flex-direction: column; gap: 6px; }
+
+    .s-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: border-color .12s, background .12s;
+    }
+    .s-row:hover { border-color: var(--muted); }
+    .s-row.active {
+      border-color: var(--accent);
+      background: var(--surface2);
+    }
+
+    .s-num {
+      font-size: .72rem;
+      color: var(--muted);
+      min-width: 20px;
+      flex-shrink: 0;
+      text-align: right;
+    }
+
+    .s-text {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: .92rem;
+      font-family: inherit;
+      outline: none;
+      padding: 2px 0;
+      min-width: 0;
+    }
+    .s-text:focus {
+      background: rgba(255,255,255,.05);
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+
+    .time-tag {
+      font-size: .78rem;
+      font-variant-numeric: tabular-nums;
+      padding: 3px 9px;
+      border-radius: 5px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: border-color .12s, background .12s;
+      user-select: none;
+    }
+    .time-tag.has-time {
+      color: var(--success);
+      border-color: rgba(34,197,94,.25);
+      background: rgba(34,197,94,.06);
+    }
+    .time-tag.has-time:hover {
+      border-color: var(--success);
+      background: rgba(34,197,94,.14);
+    }
+    .time-tag.no-time {
+      color: var(--muted);
+      border-color: var(--border);
+    }
+    .time-tag.no-time:hover {
+      border-color: var(--muted);
+    }
+
+    .time-arrow { color: var(--muted); font-size: .78rem; flex-shrink: 0; }
+
+    .s-del {
+      background: none;
+      border: none;
+      color: transparent;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: .78rem;
+      flex-shrink: 0;
+      transition: color .12s, background .12s;
+    }
+    .s-row:hover .s-del,
+    .s-row.active .s-del { color: var(--muted); }
+    .s-del:hover { color: var(--error) !important; background: rgba(239,68,68,.1); }
+
+    .hint-bar {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: .75rem;
+      color: var(--muted);
+      margin-top: 4px;
+      margin-bottom: 14px;
+    }
+
+    .save-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--success);
+      color: #fff;
+      padding: 10px 22px;
+      border-radius: 999px;
+      font-size: .88rem;
+      font-weight: 600;
+      transition: transform .25s ease;
+      pointer-events: none;
+    }
+    .save-toast.show { transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <a id="back-btn" href="index.html" class="btn btn-ghost btn-sm">← 목록</a>
+    <h1 id="pack-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">불러오는 중…</h1>
+    <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="savePack()">저장</button>
+  </div>
+
+  <div id="loading-area">
+    <div class="loading"><div class="spinner"></div>불러오는 중…</div>
+  </div>
+
+  <div id="editor-area" style="display:none">
+    <!-- Player -->
+    <div class="player-shell" style="margin-bottom:14px">
+      <div id="yt-player"></div>
+    </div>
+
+    <!-- Controls -->
+    <div class="ctrl-bar">
+      <span class="time-display" id="time-display">0:00.000</span>
+      <div class="ctrl-divider"></div>
+      <button class="btn btn-secondary btn-sm" id="btn-pp" onclick="togglePlay()">▶ 재생<span class="kbd">Space</span></button>
+      <button class="btn btn-secondary" onclick="setStart()">시작 설정<span class="kbd">[</span></button>
+      <button class="btn btn-secondary" onclick="setEnd()">끝 설정<span class="kbd">]</span></button>
+      <div class="ctrl-divider"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-preview" onclick="togglePreview()">↺ 미리듣기<span class="kbd">P</span></button>
+      <button class="btn btn-ghost btn-sm" onclick="addSentence()">+ 문장 추가</button>
+    </div>
+
+    <div class="hint-bar">
+      <span>↑↓ 문장 이동</span>
+      <span>시간 배지 클릭 → 해당 지점으로 이동</span>
+      <span>끝 설정 후 자동으로 다음 문장 이동</span>
+      <span>Esc 미리듣기 중지</span>
+    </div>
+
+    <!-- Sentence list -->
+    <div class="sentence-list" id="sentence-list"></div>
+  </div>
+</div>
+
+<div class="save-toast" id="save-toast">저장되었습니다</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+let pack        = null;
+let player      = null;
+let playerReady = false;
+let selIdx      = 0;
+let timerId     = null;
+let prevLoop    = null;
+let prevActive  = false;
+
+/* ── Init ─────────────────────────────────────────── */
+window.onYouTubeIframeAPIReady = () => { if (pack) createPlayer(); };
+
+async function init() {
+  const id = new URLSearchParams(location.search).get('id');
+  if (!id) return showErr('팩 ID가 없습니다.');
+  try {
+    const r = await fetch(`/api/packs/${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error('팩을 찾을 수 없습니다.');
+    pack = await r.json();
+    document.getElementById('pack-title').textContent = pack.title;
+    document.getElementById('back-btn').href = `study.html?id=${encodeURIComponent(pack.id)}`;
+    document.getElementById('loading-area').style.display = 'none';
+    document.getElementById('editor-area').style.display  = '';
+    renderList();
+    if (typeof YT !== 'undefined' && YT.Player) createPlayer();
+  } catch(e) { showErr(e.message); }
+}
+
+function createPlayer() {
+  player = new YT.Player('yt-player', {
+    videoId: pack.videoId,
+    playerVars: { playsinline:1, rel:0, modestbranding:1, origin: location.origin },
+    events: {
+      onReady() {
+        playerReady = true;
+        timerId = setInterval(updateTimeDisplay, 80);
+        seekToSentence(selIdx);
+      },
+      onStateChange(e) {
+        const btn = document.getElementById('btn-pp');
+        btn.textContent = e.data === YT.PlayerState.PLAYING ? '⏸ 일시정지' : '▶ 재생';
+        btn.innerHTML += '<span class="kbd">Space</span>';
+        if (e.data !== YT.PlayerState.PLAYING && prevActive) stopPreview();
+      }
+    }
+  });
+}
+
+/* ── Time display ──────────────────────────────────── */
+function updateTimeDisplay() {
+  if (!playerReady) return;
+  try { document.getElementById('time-display').textContent = fmt(player.getCurrentTime()); }
+  catch {}
+}
+
+function fmt(sec) {
+  if (sec == null || isNaN(sec)) return '--:--.---';
+  const m  = Math.floor(sec / 60);
+  const s  = Math.floor(sec % 60);
+  const ms = Math.round((sec - Math.floor(sec)) * 1000);
+  return `${m}:${pad2(s)}.${pad3(ms)}`;
+}
+
+function fmtBadge(sec) {
+  if (sec == null) return '—';
+  const m  = Math.floor(sec / 60);
+  const s  = (sec % 60).toFixed(1);
+  return m > 0
+    ? `${m}:${pad2(Math.floor(sec % 60))}.${Math.round((sec % 1) * 10)}`
+    : `${parseFloat(s)}s`;
+}
+
+function pad2(n) { return String(n).padStart(2,'0'); }
+function pad3(n) { return String(n).padStart(3,'0'); }
+
+/* ── Render list ───────────────────────────────────── */
+function renderList() {
+  document.getElementById('sentence-list').innerHTML =
+    pack.transcript.map((s, i) => {
+      const startSec = s.offset != null ? s.offset / 1000 : null;
+      const endSec   = (s.offset != null && s.duration != null)
+                       ? (s.offset + s.duration) / 1000 : null;
+      const sCls = startSec != null ? 'has-time' : 'no-time';
+      const eCls = endSec   != null ? 'has-time' : 'no-time';
+      return `
+      <div class="s-row${i===selIdx?' active':''}" id="row-${i}" onclick="selectRow(${i})">
+        <span class="s-num">${i+1}</span>
+        <input class="s-text" value="${esc(s.text)}"
+               onclick="event.stopPropagation()"
+               oninput="pack.transcript[${i}].text=this.value" />
+        <span class="time-tag ${sCls}"
+              title="${startSec!=null?'클릭: 이 지점으로 이동':'시작 미설정'}"
+              onclick="event.stopPropagation();seekTo(${startSec})">
+          ${fmtBadge(startSec)}
+        </span>
+        <span class="time-arrow">→</span>
+        <span class="time-tag ${eCls}"
+              title="${endSec!=null?'클릭: 이 지점으로 이동':'끝 미설정'}"
+              onclick="event.stopPropagation();seekTo(${endSec})">
+          ${fmtBadge(endSec)}
+        </span>
+        <button class="s-del" onclick="event.stopPropagation();deleteSentence(${i})" title="삭제">✕</button>
+      </div>`;
+    }).join('');
+}
+
+function selectRow(i) {
+  stopPreview();
+  selIdx = i;
+  renderList();
+  document.getElementById(`row-${i}`)?.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  seekToSentence(i);
+}
+
+function seekToSentence(i) {
+  const s = pack.transcript[i];
+  if (s?.offset != null) seekTo(s.offset / 1000);
+}
+
+/* ── Playback ──────────────────────────────────────── */
+function togglePlay() {
+  if (!playerReady) return;
+  try {
+    player.getPlayerState() === YT.PlayerState.PLAYING
+      ? player.pauseVideo()
+      : player.playVideo();
+  } catch {}
+}
+
+function seekTo(sec) {
+  if (!playerReady || sec == null || sec === 'null') return;
+  try { player.seekTo(Number(sec), true); } catch {}
+}
+
+/* ── Set start / end ───────────────────────────────── */
+function setStart() {
+  if (!playerReady) return;
+  stopPreview();
+  try {
+    const t  = player.getCurrentTime();
+    const s  = pack.transcript[selIdx];
+    const oldEndMs = (s.offset != null && s.duration != null) ? s.offset + s.duration : null;
+    s.offset = Math.round(t * 1000);
+    s.duration = (oldEndMs != null && oldEndMs > s.offset) ? oldEndMs - s.offset : null;
+    renderList();
+  } catch {}
+}
+
+function setEnd() {
+  if (!playerReady) return;
+  stopPreview();
+  try {
+    const t = player.getCurrentTime();
+    const s = pack.transcript[selIdx];
+    if (s.offset == null) { alert('먼저 시작 지점을 설정하세요.'); return; }
+    const endMs = Math.round(t * 1000);
+    if (endMs <= s.offset) { alert('끝 지점이 시작 지점보다 앞에 있습니다.'); return; }
+    s.duration = endMs - s.offset;
+    renderList();
+    // 자동으로 다음 문장으로 이동
+    if (selIdx < pack.transcript.length - 1) selectRow(selIdx + 1);
+  } catch {}
+}
+
+/* ── Preview loop ──────────────────────────────────── */
+function togglePreview() {
+  prevActive ? stopPreview() : startPreview();
+}
+
+function startPreview() {
+  const s = pack.transcript[selIdx];
+  if (s.offset == null || s.duration == null) return;
+
+  stopPreview();
+  prevActive = true;
+  document.getElementById('btn-preview').textContent = '■ 중지';
+  document.getElementById('btn-preview').innerHTML += '<span class="kbd">P</span>';
+
+  const startSec = s.offset / 1000;
+  const endSec   = (s.offset + s.duration) / 1000;
+  const seekSec  = Math.max(0, startSec - 0.3);
+
+  let seeking = false;
+  function doSeek() {
+    seeking = true;
+    try { player.seekTo(seekSec, true); player.playVideo(); } catch {}
+    setTimeout(() => { seeking = false; }, 300);
+  }
+
+  doSeek();
+  prevLoop = setInterval(() => {
+    if (!prevActive || seeking) return;
+    try {
+      const t = player.getCurrentTime();
+      if (t > startSec + 0.15 && t >= endSec) doSeek();
+    } catch {}
+  }, 80);
+}
+
+function stopPreview() {
+  if (prevLoop) { clearInterval(prevLoop); prevLoop = null; }
+  prevActive = false;
+  const btn = document.getElementById('btn-preview');
+  if (btn) { btn.textContent = '↺ 미리듣기'; btn.innerHTML += '<span class="kbd">P</span>'; }
+}
+
+/* ── Sentence management ───────────────────────────── */
+function addSentence() {
+  pack.transcript.push({ offset: null, duration: null, text: '새 문장' });
+  renderList();
+  selectRow(pack.transcript.length - 1);
+  setTimeout(() => document.querySelector(`#row-${pack.transcript.length-1} .s-text`)?.focus(), 50);
+}
+
+function deleteSentence(i) {
+  if (pack.transcript.length <= 1) { alert('최소 1개 문장이 필요합니다.'); return; }
+  if (!confirm(`${i+1}번 문장을 삭제할까요?`)) return;
+  pack.transcript.splice(i, 1);
+  if (selIdx >= pack.transcript.length) selIdx = pack.transcript.length - 1;
+  renderList();
+}
+
+/* ── Save ──────────────────────────────────────────── */
+async function savePack() {
+  try {
+    const r = await fetch(`/api/packs/${encodeURIComponent(pack.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pack)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+    pack = data;
+    showToast();
+  } catch(e) { alert('저장 실패: ' + e.message); }
+}
+
+function showToast() {
+  const t = document.getElementById('save-toast');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+/* ── Keyboard ──────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
+  if (e.key === '[')         { e.preventDefault(); setStart(); }
+  if (e.key === ']')         { e.preventDefault(); setEnd(); }
+  if (e.key === ' ')         { e.preventDefault(); togglePlay(); }
+  if (e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePreview(); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); if (selIdx < pack.transcript.length-1) selectRow(selIdx+1); }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); if (selIdx > 0) selectRow(selIdx-1); }
+  if (e.key === 'Escape')    stopPreview();
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); savePack(); }
+});
+
+/* ── Util ──────────────────────────────────────────── */
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showErr(msg) {
+  document.getElementById('loading-area').innerHTML =
+    `<div class="alert alert-error">${esc(msg)}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

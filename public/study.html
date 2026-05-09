@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>받아쓰기 학습</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <a href="index.html" class="btn btn-ghost btn-sm">← 목록</a>
+    <h1 id="pack-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">불러오는 중…</h1>
+  </div>
+
+  <!-- YouTube player -->
+  <div class="player-shell">
+    <div id="yt-player"></div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-row" id="progress-row" style="display:none">
+    <span class="progress-label" id="prog-label">1 / 1</span>
+    <div class="progress-track">
+      <div class="progress-fill" id="prog-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-area">
+    <div class="loading"><div class="spinner"></div>불러오는 중…</div>
+  </div>
+
+  <!-- Study area -->
+  <div id="study-area" style="display:none">
+    <div class="dictation-card">
+      <div id="feedback-box" class="feedback-box"></div>
+      <input id="dict-input" class="dict-input"
+             type="text"
+             placeholder="들리는 대로 입력하세요…"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    </div>
+
+    <div class="nav-row">
+      <button class="btn btn-secondary" id="btn-prev" onclick="prevSentence()">◀ 이전</button>
+      <button class="btn btn-primary"   id="btn-ok"   onclick="submitAnswer()">확인 ↵</button>
+      <button class="btn btn-secondary" id="btn-next" onclick="nextSentence()">다음 ▶</button>
+    </div>
+  </div>
+
+  <!-- Summary -->
+  <div id="summary-area" style="display:none">
+    <div class="card summary-card">
+      <div style="font-size:1.4rem">🎉 학습 완료!</div>
+      <div class="summary-big" id="sum-pct">0%</div>
+      <div class="summary-sub" id="sum-detail"></div>
+      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="restart()">🔁 다시 학습</button>
+        <a href="index.html" class="btn btn-secondary">목록으로</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- YouTube IFrame API -->
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+/* ─── State ─────────────────────────────────────────────── */
+let pack        = null;
+let player      = null;
+let playerReady = false;
+let idx         = 0;
+let loopId      = null;
+let answered    = false;
+
+/* ─── Init ──────────────────────────────────────────────── */
+window.onYouTubeIframeAPIReady = function () {
+  if (pack) createPlayer();
+};
+
+async function init() {
+  const id = new URLSearchParams(location.search).get('id');
+  if (!id) return showErr('팩 ID가 없습니다.');
+
+  try {
+    const res = await fetch(`/api/packs/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error('팩을 찾을 수 없습니다.');
+    pack = await res.json();
+
+    document.getElementById('pack-title').textContent = pack.title;
+    document.getElementById('loading-area').style.display = 'none';
+    document.getElementById('study-area').style.display   = '';
+    document.getElementById('progress-row').style.display = '';
+
+    updateProgress();
+
+    /* Create player now if API already loaded, otherwise onYouTubeIframeAPIReady fires */
+    if (typeof YT !== 'undefined' && YT.Player) createPlayer();
+  } catch (e) {
+    showErr(e.message);
+  }
+}
+
+function createPlayer() {
+  player = new YT.Player('yt-player', {
+    videoId: pack.videoId,
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, origin: location.origin },
+    events: {
+      onReady(e)  { playerReady = true; loadSentence(idx); },
+      onError(e)  { /* ignore transient errors; user can play manually */ }
+    }
+  });
+}
+
+/* ─── Sentence loading ───────────────────────────────────── */
+function loadSentence(i) {
+  if (!pack || i < 0 || i >= pack.transcript.length) return;
+  idx      = i;
+  answered = false;
+
+  stopLoop();
+
+  const input = document.getElementById('dict-input');
+  input.value    = '';
+  input.disabled = false;
+  const fb = document.getElementById('feedback-box');
+  fb.textContent = '';
+  fb.style.color = '';
+  document.getElementById('btn-ok').textContent = '확인 ↵';
+
+  updateProgress();
+
+  if (playerReady) {
+    const s = pack.transcript[idx];
+    if (s.offset != null && s.duration) {
+      startLoop(s);
+    } else {
+      safePlay();
+    }
+  }
+
+  /* small delay so the input isn't grabbed before the page settles */
+  setTimeout(() => { if (!answered) document.getElementById('dict-input').focus(); }, 80);
+}
+
+/* ─── Video loop ─────────────────────────────────────────── */
+function startLoop(s) {
+  const startSec = s.offset / 1000;
+  const endSec   = (s.offset + s.duration) / 1000;
+  const seekSec  = Math.max(0, startSec - 0.5);
+
+  let seeking = false;
+
+  function doSeek() {
+    seeking = true;
+    safeSeek(seekSec);
+    safePlay();
+    setTimeout(() => { seeking = false; }, 300);
+  }
+
+  doSeek();
+
+  loopId = setInterval(() => {
+    if (answered || !playerReady || seeking) return;
+    try {
+      const t = player.getCurrentTime();
+      if (t > startSec + 0.2 && t >= endSec) doSeek();
+    } catch {}
+  }, 100);
+}
+
+function stopLoop() {
+  if (loopId) { clearInterval(loopId); loopId = null; }
+}
+
+function safeSeek(sec) {
+  try { player.seekTo(sec, true); } catch {}
+}
+function safePlay() {
+  try { player.playVideo(); } catch {}
+}
+
+/* ─── Answer checking ────────────────────────────────────── */
+function submitAnswer() {
+  if (answered) return;
+  answered = true;
+  stopLoop();
+
+  document.getElementById('dict-input').disabled = true;
+
+  /* Show correct answer for self-check */
+  const fb = document.getElementById('feedback-box');
+  fb.textContent = pack.transcript[idx].text;
+  fb.style.color = 'var(--muted)';
+
+  const isLast = idx === pack.transcript.length - 1;
+  document.getElementById('btn-ok').textContent = isLast ? '완료 ↵' : '다음 ↵';
+}
+
+function prevSentence() {
+  if (idx > 0) loadSentence(idx - 1);
+}
+
+function nextSentence() {
+  if (idx < pack.transcript.length - 1) {
+    loadSentence(idx + 1);
+  } else {
+    showSummary();
+  }
+}
+
+/* ─── Progress ───────────────────────────────────────────── */
+function updateProgress() {
+  if (!pack) return;
+  const total = pack.transcript.length;
+  document.getElementById('prog-label').textContent = `${idx + 1} / ${total}`;
+  document.getElementById('prog-fill').style.width  = `${(idx / Math.max(total - 1, 1)) * 100}%`;
+  document.getElementById('btn-prev').disabled = idx === 0;
+}
+
+/* ─── Summary ────────────────────────────────────────────── */
+function showSummary() {
+  stopLoop();
+  document.getElementById('study-area').style.display   = 'none';
+  document.getElementById('progress-row').style.display = 'none';
+  document.getElementById('summary-area').style.display = '';
+
+  document.getElementById('sum-pct').textContent    = '완료';
+  document.getElementById('sum-detail').textContent = `총 ${pack.transcript.length}문장을 마쳤습니다.`;
+}
+
+function restart() {
+  document.getElementById('summary-area').style.display  = 'none';
+  document.getElementById('study-area').style.display    = '';
+  document.getElementById('progress-row').style.display  = '';
+  loadSentence(0);
+}
+
+/* ─── Keyboard ───────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!answered) submitAnswer();
+    else nextSentence();
+  }
+  if (e.key === 'ArrowLeft'  && e.altKey) prevSentence();
+  if (e.key === 'ArrowRight' && e.altKey) nextSentence();
+});
+
+/* ─── Helpers ────────────────────────────────────────────── */
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showErr(msg) {
+  document.getElementById('loading-area').innerHTML =
+    `<div class="alert alert-error">${esc(msg)}</div>`;
+}
+
+/* ─── Start ──────────────────────────────────────────────── */
+init();
+</script>
+</body>
+</html>

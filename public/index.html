@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube 영어 받아쓰기</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <span style="font-size:1.6rem">🎧</span>
+    <h1>YouTube 영어 받아쓰기</h1>
+    <a href="create.html" class="btn btn-primary btn-sm" style="margin-left:auto">+ 새로 만들기</a>
+  </div>
+
+  <div id="root">
+    <div class="loading"><div class="spinner"></div>불러오는 중…</div>
+  </div>
+</div>
+
+<script>
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadPacks() {
+  const root = document.getElementById('root');
+  try {
+    const res = await fetch('/api/packs');
+    const packs = await res.json();
+
+    if (!packs.length) {
+      root.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">🎬</div>
+          <h2>아직 학습 도구가 없습니다</h2>
+          <p>YouTube 영상으로 첫 번째 받아쓰기 세트를 만들어보세요.</p>
+          <a href="create.html" class="btn btn-primary">시작하기</a>
+        </div>`;
+      return;
+    }
+
+    root.innerHTML = `<div class="pack-grid">${packs.map(p => `
+      <div class="pack-item" onclick="go('${esc(p.id)}')">
+        <img class="pack-thumb"
+             src="https://img.youtube.com/vi/${esc(p.videoId)}/mqdefault.jpg"
+             alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+        <div class="pack-info">
+          <h3>${esc(p.title)}</h3>
+          <div class="pack-meta">
+            <span>📝 ${p.sentenceCount}문장</span>
+            ${p.isShorts ? '<span class="badge badge-shorts">Shorts</span>' : ''}
+            <span>${new Date(p.createdAt).toLocaleDateString('ko-KR')}</span>
+          </div>
+        </div>
+        <a class="pack-edit" href="edit.html?id=${esc(p.id)}" onclick="event.stopPropagation()" title="구간 편집">✏</a>
+        <button class="pack-delete" onclick="del(event,'${esc(p.id)}')" title="삭제">✕</button>
+      </div>`).join('')}</div>`;
+  } catch (e) {
+    root.innerHTML = `<div class="alert alert-error">목록을 불러오지 못했습니다: ${esc(e.message)}</div>`;
+  }
+}
+
+function go(id) { location.href = `study.html?id=${encodeURIComponent(id)}`; }
+
+async function del(e, id) {
+  e.stopPropagation();
+  if (!confirm('이 학습 도구를 삭제할까요?')) return;
+  try {
+    await fetch(`/api/packs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    loadPacks();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+loadPacks();
+</script>
+</body>
+</html>

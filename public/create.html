@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>새 학습 도구 만들기</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <a href="index.html" class="btn btn-ghost btn-sm">← 목록</a>
+    <h1>새 학습 도구 만들기</h1>
+  </div>
+
+  <!-- ① 입력 폼 -->
+  <div id="step-form">
+    <div class="card">
+      <div class="form-group">
+        <label>YouTube URL</label>
+        <input type="url" id="url-input"
+               placeholder="https://www.youtube.com/watch?v=…"
+               autocomplete="off" />
+      </div>
+
+      <div id="shorts-notice" class="alert alert-info" style="display:none">
+        ✨ YouTube Shorts 감지 — 전체 영상을 학습합니다.
+      </div>
+
+      <div id="time-group">
+        <div class="time-row">
+          <div class="form-group">
+            <label>시작 시간 (초, 선택)</label>
+            <input type="number" id="start-time" placeholder="예: 30" min="0" step="1" />
+          </div>
+          <div class="form-group">
+            <label>종료 시간 (초, 선택)</label>
+            <input type="number" id="end-time" placeholder="예: 120" min="0" step="1" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>제목</label>
+        <input type="text" id="title-input" placeholder="학습 도구 이름을 입력하세요" />
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button id="fetch-btn" class="btn btn-primary" onclick="fetchTranscript()">
+          📥 YouTube 자막
+        </button>
+        <button id="align-btn" class="btn btn-secondary" onclick="runWhisper()">
+          🎙 Whisper 정밀 분석
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="goManual()">✏ 직접 입력</button>
+      </div>
+      <div style="font-size:.78rem; color:var(--muted); margin-top:6px;">
+        Whisper: 첫 실행 시 모델 자동 다운로드 (~142 MB) · 분석에 1~3분 소요
+      </div>
+
+      <div id="fetch-msg" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <!-- ② 자막 미리보기 -->
+  <div id="step-preview" style="display:none">
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <span style="font-size:.85rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;">
+          자막 미리보기
+        </span>
+        <span id="preview-count" style="font-size:.85rem; color:var(--muted);"></span>
+      </div>
+      <div id="preview-list" class="transcript-list"></div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="startStudy()">▶ 학습 시작</button>
+        <button class="btn btn-secondary" onclick="enterEdit()">✏ 직접 편집</button>
+        <button class="btn btn-ghost btn-sm" onclick="reset()">↩ 다시 입력</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 편집 / 직접 입력 -->
+  <div id="step-edit" style="display:none">
+    <div class="card">
+      <div id="edit-notice" style="margin-bottom:12px;"></div>
+      <div class="form-group" id="title-group-edit" style="display:none">
+        <label>제목</label>
+        <input type="text" id="title-input-2" placeholder="학습 도구 이름" />
+      </div>
+      <div class="form-group">
+        <label>문장 목록 (한 줄 = 한 문장)</label>
+        <textarea id="edit-ta" placeholder="영어 문장을 한 줄에 하나씩 입력하세요…"></textarea>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="saveEdit()">💾 저장 후 학습 시작</button>
+        <button id="back-preview-btn" class="btn btn-ghost btn-sm" onclick="backPreview()" style="display:none">← 미리보기</button>
+        <button class="btn btn-ghost btn-sm" onclick="reset()">↩ 다시 입력</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let transcript = null;   // [{offset,duration,text}]
+let videoId   = null;
+let isShorts  = false;
+let manualMode = false;  // no transcript fetched
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* Auto-detect URL */
+let detectTimer = null;
+document.getElementById('url-input').addEventListener('input', function() {
+  clearTimeout(detectTimer);
+  detectTimer = setTimeout(() => detectUrl(this.value.trim()), 350);
+});
+
+async function detectUrl(url) {
+  if (!url) return;
+  try {
+    const res = await fetch('/api/parse-url', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ url })
+    });
+    const d = await res.json();
+    videoId  = d.videoId  || null;
+    isShorts = d.isShorts || false;
+    document.getElementById('time-group').style.display    = isShorts ? 'none' : '';
+    document.getElementById('shorts-notice').style.display = isShorts ? '' : 'none';
+  } catch {}
+}
+
+/* Fetch transcript */
+async function fetchTranscript() {
+  const url   = document.getElementById('url-input').value.trim();
+  const start = document.getElementById('start-time').value;
+  const end   = document.getElementById('end-time').value;
+
+  if (!url) return setMsg('<div class="alert alert-error">YouTube URL을 입력해주세요.</div>');
+
+  const btn = document.getElementById('fetch-btn');
+  btn.disabled = true;
+  setMsg('<div class="loading"><div class="spinner"></div>자막을 가져오는 중…</div>');
+
+  try {
+    const res = await fetch('/api/transcript', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ url, startTime: start, endTime: end })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    videoId   = data.videoId;
+    isShorts  = data.isShorts;
+    transcript = data.transcript;
+    manualMode = false;
+
+    setMsg('');
+    showPreview(transcript);
+  } catch (err) {
+    setMsg('');
+    /* 자막 실패 → 직접 입력 모드 */
+    manualMode = true;
+    document.getElementById('edit-notice').innerHTML =
+      `<div class="alert alert-error">⚠ 자막을 찾을 수 없습니다.<br>
+       <small>${esc(err.message)}</small><br>
+       <small>아래에 학습할 문장을 직접 입력해주세요.</small></div>`;
+    document.getElementById('title-group-edit').style.display = '';
+    document.getElementById('back-preview-btn').style.display = 'none';
+    document.getElementById('edit-ta').value = '';
+    document.getElementById('step-form').style.display = 'none';
+    document.getElementById('step-edit').style.display = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* Whisper 정밀 분석 */
+async function runWhisper() {
+  const url   = document.getElementById('url-input').value.trim();
+  const start = document.getElementById('start-time').value;
+  const end   = document.getElementById('end-time').value;
+
+  if (!url) return setMsg('<div class="alert alert-error">YouTube URL을 입력해주세요.</div>');
+
+  /* ensure videoId is parsed */
+  if (!videoId) await detectUrl(url);
+  if (!videoId) return setMsg('<div class="alert alert-error">유효한 YouTube URL이 아닙니다.</div>');
+
+  const fetchBtn = document.getElementById('fetch-btn');
+  const alignBtn = document.getElementById('align-btn');
+  fetchBtn.disabled = true;
+  alignBtn.disabled = true;
+
+  setMsg(`<div class="loading"><div class="spinner"></div>
+    오디오 다운로드 및 Whisper 분석 중… (첫 실행 시 모델 다운로드로 수 분 소요)
+  </div>`);
+
+  try {
+    const res = await fetch('/api/align', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoId, startTime: start, endTime: end }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    transcript = data.transcript;
+    manualMode = false;
+
+    setMsg('');
+    showPreview(transcript);
+  } catch (err) {
+    setMsg(`<div class="alert alert-error">⚠ Whisper 분석 실패: ${esc(err.message)}</div>`);
+  } finally {
+    fetchBtn.disabled = false;
+    alignBtn.disabled = false;
+  }
+}
+
+function setMsg(html) { document.getElementById('fetch-msg').innerHTML = html; }
+
+function showPreview(items) {
+  document.getElementById('preview-count').textContent = `${items.length}문장`;
+  document.getElementById('preview-list').innerHTML = items.map((it, i) =>
+    `<div class="transcript-item"><span class="t-num">${i+1}</span><span>${esc(it.text)}</span></div>`
+  ).join('');
+  document.getElementById('step-form').style.display = 'none';
+  document.getElementById('step-preview').style.display = '';
+}
+
+function enterEdit() {
+  manualMode = false;
+  document.getElementById('edit-notice').innerHTML =
+    `<div class="alert alert-info">✏ 한 줄에 하나의 문장. 저장 시 원본 타임스탬프를 최대한 유지합니다.</div>`;
+  document.getElementById('title-group-edit').style.display = 'none';
+  document.getElementById('back-preview-btn').style.display = '';
+  document.getElementById('edit-ta').value = transcript.map(it => it.text).join('\n');
+  document.getElementById('step-preview').style.display = 'none';
+  document.getElementById('step-edit').style.display = '';
+}
+
+function goManual() {
+  manualMode = true;
+  document.getElementById('edit-notice').innerHTML =
+    `<div class="alert alert-info">📝 학습할 영어 문장을 한 줄에 하나씩 입력하세요.</div>`;
+  document.getElementById('title-group-edit').style.display = 'none';
+  document.getElementById('back-preview-btn').style.display = 'none';
+  document.getElementById('edit-ta').value = '';
+  document.getElementById('step-form').style.display = 'none';
+  document.getElementById('step-edit').style.display = '';
+  /* title, videoId 그대로 사용 — URL이 없으면 저장 시 alert */
+}
+
+function backPreview() {
+  document.getElementById('step-edit').style.display = 'none';
+  document.getElementById('step-preview').style.display = '';
+}
+
+function reset() {
+  transcript = null;
+  manualMode = false;
+  document.getElementById('step-form').style.display = '';
+  document.getElementById('step-preview').style.display = 'none';
+  document.getElementById('step-edit').style.display = 'none';
+  setMsg('');
+}
+
+/* Save and go to study */
+async function startStudy() { await save(transcript); }
+
+async function saveEdit() {
+  const lines = document.getElementById('edit-ta').value
+    .split('\n').map(l => l.trim()).filter(l => l);
+  if (!lines.length) { alert('최소 한 문장 이상 입력해주세요.'); return; }
+
+  let built;
+  if (!manualMode && transcript) {
+    built = lines.map((text, i) => ({
+      offset:   transcript[i] ? transcript[i].offset   : null,
+      duration: transcript[i] ? transcript[i].duration : null,
+      text
+    }));
+  } else {
+    built = lines.map(text => ({ offset: null, duration: null, text }));
+  }
+
+  /* Manual mode uses title-input-2 if filled */
+  const t2 = document.getElementById('title-input-2').value.trim();
+  if (t2) document.getElementById('title-input').value = t2;
+
+  await save(built);
+}
+
+async function save(items) {
+  const url   = document.getElementById('url-input').value.trim();
+  const title = document.getElementById('title-input').value.trim() || 'Untitled';
+  const start = document.getElementById('start-time').value;
+  const end   = document.getElementById('end-time').value;
+
+  /* Try to get videoId if not yet parsed */
+  if (!videoId && url) {
+    try {
+      const r = await fetch('/api/parse-url', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ url })
+      });
+      const d = await r.json();
+      videoId = d.videoId; isShorts = d.isShorts;
+    } catch {}
+  }
+
+  if (!videoId) {
+    alert('유효한 YouTube URL을 입력해주세요.');
+    reset();
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/packs', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        title, videoId, isShorts,
+        startTime: start || null,
+        endTime:   end   || null,
+        transcript: items
+      })
+    });
+    const pack = await res.json();
+    if (!res.ok) throw new Error(pack.error);
+    location.href = `study.html?id=${encodeURIComponent(pack.id)}`;
+  } catch (err) {
+    alert('저장 실패: ' + err.message);
+  }
+}
+</script>
+</body>
+</html>
